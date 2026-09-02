@@ -1,0 +1,148 @@
+---
+title: "Country Flags & Similarity"
+format: html
+resources:
+  - data
+execute:
+  echo: false
+---
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(countrycode)
+
+# List all available flag image files
+files <- list.files("data", pattern = "\\.png$")
+codes <- sub("\\.png$", "", files)
+
+# Custom matches for regional codes not in standard iso2c
+custom_names <- c(
+  "GB-ENG" = "England",
+  "GB-NIR" = "Northern Ireland",
+  "GB-SCT" = "Scotland",
+  "GB-WLS" = "Wales",
+  "XK" = "Kosovo"
+)
+
+# Map codes to country names
+country_names <- countrycode(
+  toupper(codes),
+  origin = "iso2c",
+  destination = "country.name",
+  custom_match = custom_names
+)
+
+flags_df <- tibble(
+  code = codes,
+  name = coalesce(country_names, codes)
+) |>
+  arrange(name)
+
+# Read pairwise distance matrix data
+distances_df <- read_csv("flag_distances.csv", show_col_types = FALSE)
+
+# Pass data frames to Observable JS
+ojs_define(
+  flagData = flags_df,
+  distanceData = distances_df
+)
+```
+
+```{ojs}
+// Transform columnar R data into arrays of objects
+flags = transpose(flagData)
+distances = transpose(distanceData)
+
+// Map country codes to their readable names
+nameMap = new Map(flags.map(d => [d.code, d.name]))
+```
+
+```{ojs}
+// Country selector dropdown
+viewof selected = Inputs.select(
+  flags,
+  {
+    label: "Select a country:",
+    format: d => d.name,
+    value: flags.find(d => d.code === "us")
+  }
+)
+
+// Optional choices checkboxes
+viewof options = Inputs.checkbox(
+  [
+    "Show 3 most similar flags",
+    "Show 3 most dissimilar flags"
+  ],
+  { label: "Options:" }
+)
+```
+
+```{ojs}
+// Compute 3 most similar and 3 most dissimilar flags
+selectedDistances = distances.filter(d => d.code1 === selected.code && d.code2 !== selected.code)
+
+mostSimilar = selectedDistances
+  .slice()
+  .sort((a, b) => a.distance - b.distance)
+  .slice(0, 3)
+  .map(d => ({ code: d.code2, name: nameMap.get(d.code2), distance: d.distance }))
+
+mostDissimilar = selectedDistances
+  .slice()
+  .sort((a, b) => b.distance - a.distance)
+  .slice(0, 3)
+  .map(d => ({ code: d.code2, name: nameMap.get(d.code2), distance: d.distance }))
+```
+
+```{ojs}
+// Selected Flag Display
+html`
+<div style="margin: 20px 0; padding: 16px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+  <h3 style="margin-top: 0;">${selected.name}</h3>
+  <img src="data/${selected.code}.png" alt="Flag of ${selected.name}" style="max-width: 320px; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+</div>
+`
+```
+
+```{ojs}
+// Most Similar Flags Section
+html`
+${options.includes("Show 3 most similar flags") ? `
+  <div style="margin: 25px 0;">
+    <h4>Flags Most Similar to ${selected.name}</h4>
+    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+      ${mostSimilar.map(item => `
+        <div style="padding: 12px; background: #fdfdfd; border: 1px solid #ddd; border-radius: 6px; text-align: center; width: 220px;">
+          <img src="data/${item.code}.png" alt="Flag of ${item.name}" style="width: 100%; height: 130px; object-fit: contain; border: 1px solid #eee;">
+          <div style="font-weight: 600; margin-top: 8px;">${item.name}</div>
+          <div style="font-size: 0.85em; color: #666;">Distance: ${item.distance}</div>
+        </div>
+      `).join("")}
+    </div>
+  </div>
+` : ""}
+`
+```
+
+```{ojs}
+// Most Dissimilar Flags Section
+html`
+${options.includes("Show 3 most dissimilar flags") ? `
+  <div style="margin: 25px 0;">
+    <h4>Flags Most Dissimilar to ${selected.name}</h4>
+    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+      ${mostDissimilar.map(item => `
+        <div style="padding: 12px; background: #fdfdfd; border: 1px solid #ddd; border-radius: 6px; text-align: center; width: 220px;">
+          <img src="data/${item.code}.png" alt="Flag of ${item.name}" style="width: 100%; height: 130px; object-fit: contain; border: 1px solid #eee;">
+          <div style="font-weight: 600; margin-top: 8px;">${item.name}</div>
+          <div style="font-size: 0.85em; color: #666;">Distance: ${item.distance}</div>
+        </div>
+      `).join("")}
+    </div>
+  </div>
+` : ""}
+`
+```
